@@ -8,7 +8,7 @@ import numpy as np
 import datetime
 from typing import Dict, List, Any, Union, Optional # Import types for clarity
 import uuid
-
+import io
 # --- Database Configuration ---
 DB_CONFIG = {
     "host": "localhost",
@@ -92,8 +92,6 @@ TABLE_SCHEMA_MAPPING = {
     "Vendor": "Purchasing.Vendor",
     "WorkOrder": "Production.WorkOrder",
     "WorkOrderRouting": "Production.WorkOrderRouting",
-    # This table was in your CSV list but not the original ERD/DDL.
-    # You'll need to create it. Assuming a simple structure.
     "CountryRegionCurrency": "Sales.CountryRegionCurrency"
 }
 
@@ -226,17 +224,162 @@ DB_TO_PANDAS_TYPE_MAP: Dict[str, Union[str, type, callable]] = {
 
 def parse_csv_file(csv_filepath):
     """
-    Parse a CSV file and return its contents.
-    This function is a placeholder. You can use pandas or csv module to read the file.
+    Parse a CSV file and return its contents as a pandas DataFrame.
+    Tries multiple common encodings if the default/specified one fails.
     """
-    # Using pandas for better handling of CSVs
-    try:
-        df = pd.read_csv(csv_filepath, sep='\t', header=None, encoding='cp1252', low_memory=False)
-        return df
-    except Exception as e:
-        print(f"Error reading CSV file {csv_filepath}: {e}")
-        return None
+    # List of encodings to try, in order of likelihood based on common issues
+    # Put UTF-16 LE and UTF-8 SIG high up as they are common for non-ASCII datae
+    encodings_to_try = ['cp1252', 'utf-8-sig', 'utf-16', 'latin-1'] 
+    utf_16_encodings_file = ('BusinessEntityAddress', 'Employee', 'Person', 'EmailAddress', 'Password', \
+                            'PersonPhone', 'PhoneNumberType', 'ProductPhoto','BusinessEntity', 'ProductModel', \
+                            'CountryRegionCurrency', 'Store', 'Illustration', 'JobCandidate', 'Document')
+    utf_8_encodings_file = ('ProductReview', 'Product')
 
+
+    # Keep sep='\t' and header=None as they seem correct for your file format
+    read_csv_params = {'sep': '\t', 'header': None, 'low_memory': False} # Keep low_memory=False
+    filename = os.path.basename(csv_filepath).split('.')[0] # Get the base filename without extension
+    if not filename in utf_16_encodings_file and not filename in utf_8_encodings_file:
+        for encoding in encodings_to_try:
+            print(f"  Attempting to read {os.path.basename(csv_filepath)} with encoding='{encoding}'...")
+            try:
+                # Use pandas to read the file with the current encoding
+                df = pd.read_csv(csv_filepath, encoding=encoding, **read_csv_params)
+                print(f"  Successfully read {os.path.basename(csv_filepath)} with encoding='{encoding}'.")
+                return df # Success! Return the DataFrame
+
+            except UnicodeDecodeError as e:
+                print(f"  Decode error with encoding='{encoding}': {e}")
+                # Continue to the next encoding in the loop
+                continue
+            except FileNotFoundError:
+                print(f"  Error: File not found at {csv_filepath}")
+                # No need to try other encodings if the file itself isn't found
+                return None
+            except Exception as e:
+                # Catch other potential errors during parsing (e.g., CSV format issues, permission errors)
+                print(f"  An unexpected error occurred reading {os.path.basename(csv_filepath)} with encoding='{encoding}': {e}")
+                # If it's not a decode error, the encoding might be correct but something else failed.
+                # You might decide to stop trying encodings here or continue depending on how robust you need it.
+                return None
+    elif filename in utf_8_encodings_file:
+        # If the filename is in the utf_8_encodings_file list, try UTF-8 SIG first
+        t_tab_files = []
+        file_encoding = 'utf-8'
+        params = {'sep': r'\t', 'header': None}  # Multiple separators r'\+\||\t'
+        # If the filename is in the utf_16_encodings_file list, try UTF-16 LE first
+        print(f"  Attempting to read {os.path.basename(csv_filepath)} with encoding='utf-8-sig'...")
+        cleaned_data = None
+        try:
+            # 1. Read the file in binary mode
+            with open(csv_filepath, 'rb') as f:
+                raw_bytes = f.read()
+
+            # 2. Decode the bytes using the specified encoding
+            # Errors='ignore' can help if there are genuinely un-decodable sequences,
+            # but ideally, the encoding is correct. Try without errors='ignore' first.
+            try:
+                decoded_string = raw_bytes.decode(file_encoding)
+                print("File decoded successfully.")
+            except UnicodeDecodeError as e:
+                print(f"UnicodeDecodeError during decoding: {e}")
+                print("The file might not be strictly '{file_encoding}'. Trying with errors='ignore'.")
+                decoded_string = raw_bytes.decode(file_encoding, errors='ignore')
+
+            # 3. Clean the string - remove common invisible characters like null bytes
+            # The VS Code warning strongly suggests this is needed.
+            cleaned_string = decoded_string.replace('\x00', '') # Remove null bytes
+            # You might need to add other characters here if inspection reveals them
+
+            print("Invisible characters removed.")
+
+            # 4. Use io.StringIO to make the cleaned string look like a file to pandas
+            data_io = io.StringIO(cleaned_string)
+
+            # 5. Let pandas read from the StringIO object
+            # Don't pass encoding or low_memory when reading from StringIO
+            if os.path.basename(csv_filepath).split('.')[0] == 'ProductReview':
+                params = {'sep': r'\t', 'header': None}
+                df = pd.read_csv(data_io, sep=params['sep'], header=params['header'])
+            else:
+                df = pd.read_csv(data_io, sep=params['sep'], header=params['header'])
+
+            print("File read successfully with pandas from cleaned data!")
+            print(f"Shape of DataFrame: {df.shape}")
+            print("First 5 rows:")
+            print(df.head())
+            return df # Success! Return the DataFrame
+
+        except FileNotFoundError:
+            print(f"Error: File not found at {csv_filepath}")
+            return None
+        except Exception as e:
+            print(f"\nAn unexpected error occurred: {e}")
+            print("Please double-check the file content and encoding.")
+            return None
+ 
+    else:
+        t_tab_files = ['Employee','CountryRegionCurrency']
+        file_encoding = 'utf-16-le'
+        params = {'sep': r'\+\|', 'header': None}
+        # If the filename is in the utf_16_encodings_file list, try UTF-16 LE first
+        print(f"  Attempting to read {os.path.basename(csv_filepath)} with encoding='utf-16-le'...")
+        cleaned_data = None
+        try:
+            # 1. Read the file in binary mode
+            with open(csv_filepath, 'rb') as f:
+                raw_bytes = f.read()
+
+            # 2. Decode the bytes using the specified encoding
+            # Errors='ignore' can help if there are genuinely un-decodable sequences,
+            # but ideally, the encoding is correct. Try without errors='ignore' first.
+            try:
+                decoded_string = raw_bytes.decode(file_encoding)
+                print("File decoded successfully.")
+            except UnicodeDecodeError as e:
+                print(f"UnicodeDecodeError during decoding: {e}")
+                print("The file might not be strictly '{file_encoding}'. Trying with errors='ignore'.")
+                decoded_string = raw_bytes.decode(file_encoding, errors='ignore')
+
+            # 3. Clean the string - remove common invisible characters like null bytes
+            # The VS Code warning strongly suggests this is needed.
+            cleaned_string = decoded_string.replace('\x00', '') # Remove null bytes
+            # You might need to add other characters here if inspection reveals them
+
+            print("Invisible characters removed.")
+
+            # 4. Use io.StringIO to make the cleaned string look like a file to pandas
+            data_io = io.StringIO(cleaned_string)
+
+            # 5. Let pandas read from the StringIO object
+            # Don't pass encoding or low_memory when reading from StringIO
+            print(f"  debug 1 Attempting to read {os.path.basename(csv_filepath)} with encoding='utf-16-le'...")
+            if os.path.basename(csv_filepath).split('.')[0] in t_tab_files:
+                print(f"  debug 2 Attempting to read 2 {os.path.basename(csv_filepath)} with encoding='utf-16-le'...")
+                params = {'sep': r'\t', 'header': None}
+                df = pd.read_csv(data_io, sep=params['sep'], header=params['header'])
+            else:
+                df = pd.read_csv(data_io, sep=params['sep'], header=params['header'])
+
+
+            print("File read successfully with pandas from cleaned data!")
+            print(f"Shape of DataFrame: {df.shape}")
+            print("First 5 rows:")
+            print(df.head())
+            return df # Success! Return the DataFrame
+
+        except FileNotFoundError:
+            print(f"Error: File not found at {os.path.basename(csv_filepath)}")
+            return None
+        except Exception as e:
+            print(f"\nAn unexpected error occurred: {e}")
+            print("Please double-check the file content and encoding.")
+            return None
+        
+    # If the loop finishes without returning, it means all attempted encodings failed to decode
+    print(f"  Failed to decode {os.path.basename(csv_filepath)} with all attempted encodings.")
+    return None
+    
 def get_table_schema_with_schema(schema_name: str, table_name: str, conn: Any) -> Dict[str, str]:
     column_info: Dict[str, str] = {}
     try:
@@ -276,6 +419,8 @@ def rename_dataframe_columns_from_schema(df: pd.DataFrame, db_schema: Dict[str, 
         ValueError: If the number of columns in the DataFrame does not match
                     the number of keys in the schema dictionary.
     """
+    print('few data',df.columns)
+
     # Get the column names from the dictionary keys.
     # Dictionaries maintain insertion order in Python 3.7+
     new_column_names = list(db_schema.keys())
@@ -366,7 +511,6 @@ def convert_dataframe_columns_to_db_types(df: pd.DataFrame, db_schema: Dict[str,
                 if df_converted[col_name].dtype != 'object':
                      print(f"  Warning: UUID conversion for column '{col_name}' did not result in 'object' dtype. Resulting dtype: '{df_converted[col_name].dtype}'")
 
-
             elif isinstance(pandas_target_hint, str):
                  # Use astype for standard pandas dtype strings ('Int64', 'string', 'boolean', 'Float64')
                  # Check if the current dtype is already the target dtype (case-insensitive check for nullable types)
@@ -392,26 +536,52 @@ def convert_dataframe_columns_to_db_types(df: pd.DataFrame, db_schema: Dict[str,
                 # If the target hint is a boolean, we can use astype(bool)
                 # This is useful for boolean types, but be careful with NaNs
                 df_converted[col_name] = df_converted[col_name].astype(bool)
-
-                
-            # Note: We are not explicitly handling Python type objects like int, float, bool here
-            # because we are primarily mapping to pandas dtypes (strings like 'Int64')
-            # If you mapped to `int`, `float`, etc., you'd add elif isinstance(pandas_target_hint, type):
-            # and use df_converted[col_name] = pd.to_numeric(df_converted[col_name], errors='coerce').astype(pandas_target_hint) for numbers
-            # or df_converted[col_name] = df_converted[col_name].astype(pandas_target_hint) for others, being careful about NaNs.
-            # Mapping to the pandas nullable dtype strings ('Int64', 'string' etc.) is generally preferred.
-
-
-            # print(f"  Converted column '{col_name}' to dtype: {df_converted[col_name].dtype}")
-
         except Exception as e:
             # Catch any errors during the conversion process for this column
             print(f"  Error converting column '{col_name}' (DB type '{db_type_str}') to target type. Error: {e}. Leaving column as '{df_converted[col_name].dtype}'.")
             # If an error occurs during conversion of a column, leave it as is and continue with the next column.
             continue
 
-    print("Finished data type conversion.")
     return df_converted
+
+def get_primary_key_columns(cursor, schema_name, table_name):
+    """
+    Retrieves the column names that make up the primary key for a given table.
+
+    Args:
+        cursor: A psycopg2 cursor object.
+        schema_name: The name of the database schema (e.g., 'public').
+        table_name: The name of the table.
+
+    Returns:
+        A list of column names if a primary key exists, ordered correctly
+        for composite keys. Returns None if no primary key is found.
+    """
+    query = """
+        SELECT kcu.column_name
+        FROM information_schema.table_constraints tc
+        JOIN information_schema.key_column_usage kcu
+          ON tc.constraint_name = kcu.constraint_name
+         AND tc.table_schema = kcu.table_schema
+         AND tc.table_name = kcu.table_name
+        WHERE tc.constraint_type = 'PRIMARY KEY'
+          AND tc.table_schema = %s
+          AND tc.table_name = %s
+        ORDER BY kcu.ordinal_position;
+    """
+    try:
+        cursor.execute(query, (schema_name, table_name))
+        pk_columns = [row[0] for row in cursor.fetchall()]
+        if pk_columns:
+            return pk_columns
+        else:
+            return None # No primary key found
+    except Exception as e:
+        print(f"Error retrieving primary key for {schema_name}.{table_name}: {e}")
+        # Depending on your needs, you might want to raise the exception
+        # or return None to indicate failure.
+        return None
+
 
 
 def insert_dataframe_in_chunks(
@@ -456,40 +626,48 @@ def insert_dataframe_in_chunks(
     for col in df_cleaned.columns:
         # Check if NaT/NaN/NA exists in this column before replacement
         has_missing_before = df_cleaned[col].isna().any()
-        # print(f"  Processing column '{col}' (dtype: {df_cleaned[col].dtype})... has missing: {has_missing_before}") # Verbose debug
 
         if has_missing_before:
              # Replace all pandas missing values in this column with None
              df_cleaned[col] = df_cleaned[col].replace({pd.NA: None, pd.NaT: None})
-             # Also handle NumPy NaN if present in object columns etc.
-             # Using .loc[isna()] is often most reliable for *all* missing types
              df_cleaned.loc[df_cleaned[col].isna(), col] = None
 
         # Verify replacement for NaT specifically if it's a datetime column
         if df_cleaned[col].dtype == 'datetime64[ns]':
             has_pd_nat_after = (df_cleaned[col] == pd.NaT).any()
-            # print(f"    Column '{col}' still contains pd.NaT after replacement: {has_pd_nat_after}") # Verbose debug
             if has_pd_nat_after:
                  print(f"  CRITICAL DEBUG: Column '{col}' (datetime) *still* contains pd.NaT after replacement.")
             else:
                  print(f"  Debug: Column '{col}' (datetime) successfully replaced pd.NaT with None.") # Confirm success
+        
+        # --- Specific handling for boolean columns ---
+        # Check if the column's dtype is pandas boolean or numpy boolean
+        # Note: pd.api.types.is_bool_dtype checks for both numpy bool and pandas nullable boolean
+        if pd.api.types.is_bool_dtype(df_cleaned[col].dtype):
+             # Ensure values are standard Python bool or None
+             # Convert to object dtype first to handle potential mixed types or np.bool_
+             # Then apply a function that explicitly returns True, False, or None
+             print(f"  Standardizing boolean column '{col}'...")
+             df_cleaned[col] = df_cleaned[col].apply(
+                 lambda x: True if x is True or (isinstance(x, np.bool_) and x == True) else (False if x is False or (isinstance(x, np.bool_) and x == False) else None)
+             )
 
 
     print("Replacement complete. Final dtypes of cleaned DataFrame:")
-    print(df_cleaned.dtypes)
-    print("-" * 30)
     # --- END IMPROVED REPLACEMENT STEP ---
     # --- CORRECTED: Construct the INSERT SQL statement using psycopg2.sql ---
     # Correctly handle schema.table notation using sql.Identifier with multiple arguments
     if '.' in table_name:
         # Split into schema and table name
         schema_name, simple_table_name = table_name.split('.', 1) # Split only on the first dot
+        
         # Create ONE identifier object for the qualified name
         table_ident = sql.Identifier(schema_name, simple_table_name)
     else:
         # No schema specified, just use the table name
         table_ident = sql.Identifier(table_name)
-
+    # strip schema from table name
+    table_name = table_name.split('.')[1] if '.' in table_name else table_name
     # Column identifiers (use original df_columns names)
     column_idents = [sql.Identifier(col) for col in df_columns]
     column_list = sql.SQL(', ').join(column_idents)
@@ -510,7 +688,7 @@ def insert_dataframe_in_chunks(
 
 
     print(f"\nStarting bulk insert into {table_name} in chunks of {chunk_size}...")
-    print(f"Total rows to insert: {len(df_cleaned)}")
+    # print(f"Total rows to insert: {len(df_cleaned)}")
 
     num_rows = len(df_cleaned)
     num_chunks = (num_rows + chunk_size - 1) // chunk_size
@@ -527,37 +705,91 @@ def insert_dataframe_in_chunks(
 
         # --- Insertion loop ---
         with conn.cursor() as cur:
+            # --- Dynamically get Primary Key columns ---
+            pk_columns = get_primary_key_columns(cur, schema_name, table_name)
+
+            if pk_columns is None:
+                # Option A: Print warning and skip ON CONFLICT (inserts will fail on PK violation)
+                print(f"  Warning: Table {schema_name}.{table_name} has no primary key. Cannot use ON CONFLICT.")
+                on_conflict_clause = sql.SQL("") # Empty string means no ON CONFLICT
+            else:
+                print(f"  Primary key for {table_name}: {pk_columns}. Using ON CONFLICT DO NOTHING.")
+                pk_columns_sql = sql.SQL(", ").join(map(sql.Identifier, pk_columns))
+                on_conflict_clause = sql.SQL("ON CONFLICT ({pk_cols}) DO NOTHING").format(
+                    pk_cols=pk_columns_sql
+                )
+
+            # Get column names from the DataFrame to build the insert statement safely
+            # Assuming DataFrame column names match database column names
+            df_columns = df_cleaned.columns.tolist()
+            columns_sql = sql.SQL(", ").join(map(sql.Identifier, df_columns ))
+            values_sql = sql.SQL(", ").join(sql.Placeholder() * len(df_columns)) # Use Placeholder() for each column
+
+            # Construct the INSERT statement with the dynamic ON CONFLICT clause
+            insert_sql = sql.SQL("""
+                INSERT INTO {table} ({columns})
+                VALUES ({values})
+                {on_conflict_clause};
+            """).format(
+                table=sql.Identifier(schema_name, table_name), # Include schema in table identifier
+                columns=columns_sql,
+                values=values_sql,
+                on_conflict_clause=on_conflict_clause
+            )
+            
             for i in range(num_chunks):
-                 start_index = i * chunk_size
-                 end_index = min((i + 1) * chunk_size, num_rows)
+                start_index = i * chunk_size
+                end_index = min((i + 1) * chunk_size, num_rows)
 
-                 chunk_df = df_cleaned.iloc[start_index:end_index]
-                 data_for_batch = list(chunk_df.itertuples(index=False, name=None))
+                chunk_df = df_cleaned.iloc[start_index:end_index]
+                # Convert the DataFrame chunk to a list of tuples
+                # Ensure the order matches the columns_sql
+                data_for_batch = list(chunk_df.itertuples(index=False, name=None))
 
-                 if not data_for_batch:
-                     print(f"  Warning: Batch {i+1}/{num_chunks} is empty. Skipping.")
-                     continue
+                if not data_for_batch:
+                    print(f"  Warning: Batch {i+1}/{num_chunks} is empty. Skipping.")
+                    continue
 
-                 try:
-                     cur.executemany(insert_sql, data_for_batch)
-                     print(f"  Inserted chunk {i+1}/{num_chunks} ({len(data_for_batch)} rows)...")
-                     conn.commit() # Commit the transaction for this batch
+                try:
+                    # executemany with ON CONFLICT DO NOTHING will not raise an exception
+                    # for primary key or unique constraint violations on the specified columns.
+                    cur.executemany(insert_sql, data_for_batch)
 
-                 except Exception as e:
-                     conn.rollback() # Rollback the failed batch
-                     print(f"\n  Error inserting chunk {i+1}/{num_chunks} starting at row {start_index}. Rolling back batch.")
-                     print(f"  Error details: {e}")
-                     # Re-raise the exception so the outer block knows loading failed
-                     raise e
+                    # Note: You won't know how many rows were skipped due to conflict
+                    # directly from executemany. The print message reflects this handling.
+                    status_msg = f"  Processed chunk {i+1}/{num_chunks} ({len(data_for_batch)} rows)."
+                    if pk_columns:
+                        status_msg += f" Conflicts on {', '.join(pk_columns)} skipped."
+                    print(status_msg)
 
-        print(f"Successfully inserted all {len(df_cleaned)} rows into {table_name}.")
+                    conn.commit() # Commit the transaction for this batch
+
+                except Exception as e:
+                    # This block catches errors OTHER THAN unique constraint violations
+                    # handled by ON CONFLICT (e.g., data type errors, foreign key errors).
+                    conn.rollback() # Rollback the failed batch
+                    print(f"\n  Error inserting chunk {i+1}/{num_chunks} starting at row {start_index} into {table_name}. Rolling back batch.")
+                    print(f"  Error details: {e}")
+
+                    # Decide what to do here:
+                    # If loading multiple tables in an outer loop:
+                    #   - Raise the exception: Stops processing *this table* entirely, 
+                    #     allowing the outer loop to catch it and potentially move to the next table.
+                    raise e 
+
+                    # If processing only one table, and you want to just skip the bad chunk:
+                    #   - Remove 'raise e' and add a 'continue' to move to the next chunk.
+                    #   continue # Skip this bad chunk and try the next one
+
+        print(f"Finished insertion into {schema_name}.{table_name}.")
 
     except Exception as e:
-        # Catch any errors during insertion (either from batch or other issues)
-        print(f"\nAn error occurred during the insertion process for table {table_name}.")
-        # The batch error handler already rolled back the failed batch
-        # Decide if you need a final rollback here based on your overall transaction strategy
-        raise e # Re-raise the exception to signal failure
+        # This catches errors from the outer try block or re-raised exceptions
+        print(f"\nLoading process for table {schema_name}.{table_name} halted due to an error.")
+        print(f"Details: {e}")
+        # If this is part of a larger script loading multiple tables,
+        # the outer loop would catch this and decide whether to stop entirely
+        # or move to the next table.
 
     finally:
         # --- Ensure FK checks are re-enabled ---
@@ -592,7 +824,6 @@ def main():
                     table_name = full_table_name.split('.')[1].lower()
                     # Check if the table is already created
                     column_from_db = get_table_schema_with_schema(schema_name, table_name, conn)
-                    print(f"  Address table schema: {column_from_db}")
                     try:
                         contents = parse_csv_file(csv_file_path)
                         if contents is None:
@@ -610,16 +841,11 @@ def main():
                     except Exception as e:
                         print(f"Error processing file {csv_file_path}: {e}")
                         return
-                
-                    print(f"  DataFrame shape: {contents.head()}")
-                    print(f"  DataFrame columns: {contents.columns.tolist()}")
+            
                     # Get number of columns from database
                     columns_from_db = len(list(column_from_db.keys()))
-                    print(f"  Number of columns in database: {columns_from_db}")
                     new_df = rename_dataframe_columns_from_schema(contents.copy(), column_from_db)
-                    print(f"  DataFrame shape after renaming: {new_df.head()}")
                     converted_new_df = convert_dataframe_columns_to_db_types(new_df.copy(), column_from_db)
-                    print(f"  DataFrame shape after conversion: {converted_new_df.head()}")
                     # Load the DataFrame into the database
                     insert_dataframe_in_chunks(converted_new_df, conn, full_table_name)
                         
@@ -628,7 +854,6 @@ def main():
             else:
                 print(f"Warning: Filename '{base_filename}' is in load order but not in TABLE_SCHEMA_MAPPING. Skipping.")
         
-
     except psycopg2.Error as e:
         print(f"Database connection error: {e}")
     except Exception as e:
