@@ -1,38 +1,38 @@
 ﻿
-filename = "/home/blueberry/Desktop/advanced_sql_tutorial/data/Person.csv" # <--- CHANGE THIS TO YOUR FILENAME
-# num_lines_to_inspect = 10
+filename = "data/SalesOrderHeader.csv" # <--- CHANGE THIS TO YOUR FILENAME
+num_lines_to_inspect = 10
 
-# try:
-#     with open(filename, 'rb') as f: # 'rb' means read in binary mode
-#         print(f"Inspecting raw bytes of the first {num_lines_to_inspect} lines of '{filename}':\n")
-#         for i in range(num_lines_to_inspect):
-#             line_bytes = f.readline()
-#             if not line_bytes: # End of file
-#                 print(f"--- End of file reached before {num_lines_to_inspect} lines ---")
-#                 break
-#             print(f"Line {i+1} (raw bytes): {line_bytes!r}") # !r shows escape sequences
-#             # Let's try to decode with common encodings to see what it looks like
-#             try:
-#                 print(f"  Decoded as UTF-8:       '{line_bytes.decode('utf-8', errors='replace')[:100].strip()}'")
-#             except Exception:
-#                 print("  Could not decode as UTF-8")
-#             try:
-#                 print(f"  Decoded as UTF-16-LE:   '{line_bytes.decode('utf-16-le', errors='replace')[:100].strip()}'")
-#             except Exception:
-#                 print("  Could not decode as UTF-16-LE")
-#             try:
-#                 print(f"  Decoded as UTF-16-BE:   '{line_bytes.decode('utf-16-be', errors='replace')[:100].strip()}'")
-#             except Exception:
-#                 print("  Could not decode as UTF-16-BE")
-#             try:
-#                 print(f"  Decoded as latin-1:     '{line_bytes.decode('latin-1', errors='replace')[:100].strip()}'")
-#             except Exception:
-#                 print("  Could not decode as latin-1")
-#             print("-" * 30)
-# except FileNotFoundError:
-#     print(f"Error: File '{filename}' not found.")
-# except Exception as e:
-#     print(f"An error occurred: {e}")
+try:
+    with open(filename, 'rb') as f: # 'rb' means read in binary mode
+        print(f"Inspecting raw bytes of the first {num_lines_to_inspect} lines of '{filename}':\n")
+        for i in range(num_lines_to_inspect):
+            line_bytes = f.readline()
+            if not line_bytes: # End of file
+                print(f"--- End of file reached before {num_lines_to_inspect} lines ---")
+                break
+            print(f"Line {i+1} (raw bytes): {line_bytes!r}") # !r shows escape sequences
+            # Let's try to decode with common encodings to see what it looks like
+            try:
+                print(f"  Decoded as UTF-8:       '{line_bytes.decode('utf-8', errors='replace')[:100].strip()}'")
+            except Exception:
+                print("  Could not decode as UTF-8")
+            try:
+                print(f"  Decoded as UTF-16-LE:   '{line_bytes.decode('utf-16-le', errors='replace')[:100].strip()}'")
+            except Exception:
+                print("  Could not decode as UTF-16-LE")
+            try:
+                print(f"  Decoded as UTF-16-BE:   '{line_bytes.decode('utf-16-be', errors='replace')[:100].strip()}'")
+            except Exception:
+                print("  Could not decode as UTF-16-BE")
+            try:
+                print(f"  Decoded as latin-1:     '{line_bytes.decode('latin-1', errors='replace')[:100].strip()}'")
+            except Exception:
+                print("  Could not decode as latin-1")
+            print("-" * 30)
+except FileNotFoundError:
+    print(f"Error: File '{filename}' not found.")
+except Exception as e:
+    print(f"An error occurred: {e}")
 
 
 # Run this script and paste the output here. The !r in print(f"{line_bytes!r}") will show the byte string representation (e.g., b'\xff\xfeH\x00e\x00l\x00l\x00o\x00'). This is what I need to analyze.
@@ -132,65 +132,65 @@ filename = "/home/blueberry/Desktop/advanced_sql_tutorial/data/Person.csv" # <--
 #         print(f"Error with '{enc}': {e_pandas}")
 
 
-import pandas as pd
-import os
-import io # Import io to treat a string as a file
+# import pandas as pd
+# import os
+# import io # Import io to treat a string as a file
 
-csv_filepath = 'Person.csv' # Make sure this path is correct
+# csv_filepath = 'Person.csv' # Make sure this path is correct
 
-# Define your parameters
-params = {
-    'sep': r'\+\|',  # Correct regex for literal '+|'
-    'header': None,  # No header row in the data section
-    # We will handle encoding manually first, so don't pass it to read_csv directly
-    # 'encoding': 'utf-16-le', 
-    # 'low_memory': False # Irrelevant when reading from StringIO
-}
+# # Define your parameters
+# params = {
+#     'sep': r'\+\|',  # Correct regex for literal '+|'
+#     'header': None,  # No header row in the data section
+#     # We will handle encoding manually first, so don't pass it to read_csv directly
+#     # 'encoding': 'utf-16-le', 
+#     # 'low_memory': False # Irrelevant when reading from StringIO
+# }
 
-file_encoding = 'utf-16-le' # Specify the encoding for manual decoding
+# file_encoding = 'utf-16-le' # Specify the encoding for manual decoding
 
-print(f"Attempting to read and clean {filename} with encoding='{file_encoding}'...")
+# print(f"Attempting to read and clean {filename} with encoding='{file_encoding}'...")
 
-cleaned_data = None
-try:
-    # 1. Read the file in binary mode
-    with open(filename, 'rb') as f:
-        raw_bytes = f.read()
+# cleaned_data = None
+# try:
+#     # 1. Read the file in binary mode
+#     with open(filename, 'rb') as f:
+#         raw_bytes = f.read()
 
-    # 2. Decode the bytes using the specified encoding
-    # Errors='ignore' can help if there are genuinely un-decodable sequences,
-    # but ideally, the encoding is correct. Try without errors='ignore' first.
-    try:
-        decoded_string = raw_bytes.decode(file_encoding)
-        print("File decoded successfully.")
-    except UnicodeDecodeError as e:
-        print(f"UnicodeDecodeError during decoding: {e}")
-        print("The file might not be strictly '{file_encoding}'. Trying with errors='ignore'.")
-        decoded_string = raw_bytes.decode(file_encoding, errors='ignore')
+#     # 2. Decode the bytes using the specified encoding
+#     # Errors='ignore' can help if there are genuinely un-decodable sequences,
+#     # but ideally, the encoding is correct. Try without errors='ignore' first.
+#     try:
+#         decoded_string = raw_bytes.decode(file_encoding)
+#         print("File decoded successfully.")
+#     except UnicodeDecodeError as e:
+#         print(f"UnicodeDecodeError during decoding: {e}")
+#         print("The file might not be strictly '{file_encoding}'. Trying with errors='ignore'.")
+#         decoded_string = raw_bytes.decode(file_encoding, errors='ignore')
 
 
-    # 3. Clean the string - remove common invisible characters like null bytes
-    # The VS Code warning strongly suggests this is needed.
-    cleaned_string = decoded_string.replace('\x00', '') # Remove null bytes
-    # You might need to add other characters here if inspection reveals them
+#     # 3. Clean the string - remove common invisible characters like null bytes
+#     # The VS Code warning strongly suggests this is needed.
+#     cleaned_string = decoded_string.replace('\x00', '') # Remove null bytes
+#     # You might need to add other characters here if inspection reveals them
 
-    print("Invisible characters removed.")
+#     print("Invisible characters removed.")
 
-    # 4. Use io.StringIO to make the cleaned string look like a file to pandas
-    data_io = io.StringIO(cleaned_string)
+#     # 4. Use io.StringIO to make the cleaned string look like a file to pandas
+#     data_io = io.StringIO(cleaned_string)
 
-    # 5. Let pandas read from the StringIO object
-    # Don't pass encoding or low_memory when reading from StringIO
-    df = pd.read_csv(data_io, sep=params['sep'], header=params['header'])
+#     # 5. Let pandas read from the StringIO object
+#     # Don't pass encoding or low_memory when reading from StringIO
+#     df = pd.read_csv(data_io, sep=params['sep'], header=params['header'])
 
-    print("File read successfully with pandas from cleaned data!")
-    print(f"Shape of DataFrame: {df.shape}")
-    print("First 5 rows:")
-    print(df.head())
+#     print("File read successfully with pandas from cleaned data!")
+#     print(f"Shape of DataFrame: {df.shape}")
+#     print("First 5 rows:")
+#     print(df.head())
 
-except FileNotFoundError:
-    print(f"Error: File not found at {csv_filepath}")
-except Exception as e:
-    print(f"\nAn unexpected error occurred: {e}")
-    print("Please double-check the file content and encoding.")
+# except FileNotFoundError:
+#     print(f"Error: File not found at {csv_filepath}")
+# except Exception as e:
+#     print(f"\nAn unexpected error occurred: {e}")
+#     print("Please double-check the file content and encoding.")
 
